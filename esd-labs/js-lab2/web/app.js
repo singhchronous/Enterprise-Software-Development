@@ -134,14 +134,30 @@ function renderSgpa(state) {
 // ---------------------------------------------------------------------------
 // TODO: const [getState, setState] = useState(initialState, render);
 // TODO: const dispatch = (event) => …   (hint: setState with an updater that calls transition)
+const [getState, setState] = useState(initialState, render);
+const dispatch = (event) => setState((state) => transition(state, event));
 
 // ---------------------------------------------------------------------------
 // Step 2 (sections 07 and 08) — render(): draw the state.
 // First make it call all five region functions every time. Then (section 08)
 // make it redraw a region only when the part of the state it shows has changed.
 // ---------------------------------------------------------------------------
+// The state from the last render, kept OUTSIDE render() so the next render can compare.
+let previous = null;
+
 function render() {
   // TODO
+  const state = getState();
+  // A region needs redrawing if any part of the state it shows is a different reference.
+  const changed = (...keys) => previous === null || keys.some((key) => state[key] !== previous[key]);
+
+  if (changed("departments", "department")) renderDepartments(state);
+  if (changed("status", "error", "courses")) renderStatus(state);
+  if (changed("courses", "planner")) renderCourses(state);
+  if (changed("planner")) renderPlanner(state);
+  if (changed("planner", "grades")) renderSgpa(state);
+
+  previous = state;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,9 +165,22 @@ function render() {
 // LOAD_START before; LOAD_OK or LOAD_FAIL after. Use fetchCourses(filters, fetchWithNetwork).
 // Section 09: keep only the LATEST response, with createLatestOnly().
 // ---------------------------------------------------------------------------
+const track = createLatestOnly();
+
 async function load() {
   // TODO
+  dispatch({ type: "LOAD_START" });
+  const { department, query } = getState();
+  try {
+    const result = await track(fetchCourses({ department, q: query }, fetchWithNetwork));
+    if (!result.stale) dispatch({ type: "LOAD_OK", courses: result.value });
+  } catch (error) {
+    dispatch({ type: "LOAD_FAIL", message: error.message });
+  }
 }
+
+// Stretch (section 09): typing waits 250 ms before searching; clicks still load at once.
+const loadSoon = debounce(load, 250);
 
 // ---------------------------------------------------------------------------
 // Step 4 (section 07) — events. Each one dispatches, and maybe loads.
@@ -166,7 +195,53 @@ async function load() {
 // TODO: the form's "submit"      → preventDefault (Enter in a field must not reload the page)
 // TODO: "Try again" button       → load()
 
+els.search.addEventListener("input", () => {
+  dispatch({ type: "SET_QUERY", query: els.search.value });
+  loadSoon();
+});
+
+els.departments.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-department]");
+  if (!button) return;
+  dispatch({ type: "SET_DEPARTMENT", department: button.dataset.department });
+  load();
+});
+
+els.courses.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-id]");
+  if (!button) return;
+  const id = Number(button.dataset.id);
+  if (button.dataset.inPlanner === "true") {
+    dispatch({ type: "REMOVE", id });
+  } else {
+    const course = getState().courses.find((c) => c.id === id);
+    if (course) dispatch({ type: "ADD", course });
+  }
+});
+
+els.planned.addEventListener("change", (event) => {
+  const select = event.target.closest("select[data-id]");
+  if (!select) return;
+  dispatch({ type: "SET_GRADE", id: Number(select.dataset.id), grade: select.value });
+});
+
+els.planned.addEventListener("click", (event) => {
+  const button = event.target.closest("button[data-remove]");
+  if (!button) return;
+  dispatch({ type: "REMOVE", id: Number(button.dataset.remove) });
+});
+
+els.sgpaForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+});
+
+els.retry.addEventListener("click", () => {
+  load();
+});
+
 // ---------------------------------------------------------------------------
 // Start: draw once, then load.
 // ---------------------------------------------------------------------------
 // TODO: render(); load();
+render();
+load();

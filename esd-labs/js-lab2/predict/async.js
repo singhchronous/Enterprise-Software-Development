@@ -6,7 +6,7 @@ async function main() {
   // ---- 1. What does an async function return? -----------------------------
   async function getCount() { return 3; }
   console.log("1:", getCount());
-  // Prediction:
+  // Prediction: 1: Promise { 3 }. An async function always returns a promise, even for a plain value.
 
   // ---- 2. The order things happen in ----------------------------------------
   console.log("2: a");
@@ -14,7 +14,7 @@ async function main() {
   Promise.resolve().then(() => console.log("2: c (promise)"));
   console.log("2: d");
   await wait(10);
-  // Prediction (order of a, b, c, d):
+  // Prediction (order of a, b, c, d): a, d, c, b. Sync code first, then promise callbacks (microtasks), then timers.
 
   // ---- 3. await pauses THIS function, not the program ------------------------
   const order = [];
@@ -23,7 +23,7 @@ async function main() {
   order.push("main carries on");
   await running;
   console.log("3:", order);
-  // Prediction:
+  // Prediction: [ 'job starts', 'main carries on', 'job ends' ]. await pauses only job(); main keeps going.
 
   // ---- 4. One after another, or all at once? ---------------------------------
   let t = Date.now();
@@ -32,7 +32,7 @@ async function main() {
   t = Date.now();
   await Promise.all([wait(100), wait(100), wait(100)]);
   console.log("4: all at once took about", Math.round((Date.now() - t) / 50) * 50, "ms");
-  // Prediction (both numbers):
+  // Prediction (both numbers): about 300 ms in order, about 100 ms all at once (the waits overlap).
 
   // ---- 5. Who finishes first? -----------------------------------------------
   const winners = [];
@@ -43,6 +43,8 @@ async function main() {
   console.log("5: arrived in this order:", winners);
   // Prediction — and if each one REPLACED the list on screen when it arrived,
   // which department would the student see at the end?
+  // Mathematics first, then Electronics. The student would end up seeing Electronics,
+  // even though they asked for Mathematics last (the bug section 09 fixes).
 
   // ---- 6. A closure, captured at call time ------------------------------------
   let department = "Electronics";
@@ -50,7 +52,7 @@ async function main() {
   const pending = showLater();
   department = "Mathematics";
   console.log("6:", await pending, "| department is now", department);
-  // Prediction:
+  // Prediction: showing Electronics | department is now Mathematics. d was read when showLater was called.
 
   // ---- 7. An error inside async ----------------------------------------------
   async function load() { throw new Error("HTTP 500"); }
@@ -60,7 +62,7 @@ async function main() {
   } catch (error) {
     console.log("7: caught", error.message);
   }
-  // Prediction:
+  // Prediction: 7: caught HTTP 500. A throw in an async function rejects its promise, and await rethrows it.
 }
 
 main();
