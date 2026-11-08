@@ -1,0 +1,6 @@
+node_modules
+dist
+.env.local
+.DS_Store
+# What npm run carry replaced (it keeps a copy here)
+.carry-backup/

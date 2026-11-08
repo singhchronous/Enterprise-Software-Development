@@ -1,0 +1,13 @@
+{
+  "name": "esd-api-contract",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ESD 2026 — the backend contract: openapi.yaml, the seed data, the mock API, and the conformance suite your own Spring Boot backend must pass.",
+  "type": "module",
+  "engines": { "node": ">=20.19" },
+  "scripts": {
+    "conformance": "node conformance/run.js",
+    "mock": "node mock/server.js",
+    "token": "node conformance/token.js"
+  }
+}

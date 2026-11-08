@@ -1,0 +1,603 @@
+openapi: 3.0.3
+info:
+  title: ESD Course Catalogue API
+  version: 1.0.0
+  description: |
+    The frozen contract for the ESD 2026 frontend labs (React Labs 1–4, the React Bug Lab
+    and the OAuth2 lab), and the target every student's own Spring Boot backend grows into.
+
+    **Any backend that conforms to this document works with the course's React app.**
+    "Conforms" is checked mechanically: `npm run conformance` in the `api-contract` lab
+    folder runs the published conformance suite against a running backend. The TA
+    reference implementation and the React labs' mock API both pass it.
+
+    ## Conformance levels
+    The suite is split into levels that build on each other. Nothing in the React labs
+    calls a student's own backend until React Lab 4, so A and B are milestones on the way
+    to C, not things a lab needs on their own.
+    - **A — Catalogue:** `GET /api/courses` (with filters), `GET /api/courses/{id}`, the
+      seed, the error shape.
+    - **B — Accounts:** signup, login, `GET /api/users/me`, logout, 401 rules.
+    - **C — Enrollments and admin:** enroll, drop, list mine, ADMIN course writes, every
+      409 rule. **A + B + C are what React Lab 4 grades**, the integration lab.
+    - **D — Google:** `POST /api/auth/google`. Built in the OAuth2 lab.
+    - **CORS** is checked on its own line, not inside a level: it's added in React Lab 4,
+      the first time the browser calls your backend from another origin.
+
+    ## Conventions
+    - All request and response bodies are `application/json`. Unknown request fields are
+      ignored (so a `role` in a signup body has no effect).
+    - Emails are trimmed and lowercased **before** validation, storage and comparison.
+    - Timestamps are ISO-8601 in UTC, e.g. `2026-01-15T09:30:00Z`.
+    - IDs are positive 64-bit integers assigned by the server. Clients never invent IDs.
+    - No pagination. List endpoints return the full list (the catalogue is small).
+    - List order is part of the contract: courses are sorted by `code` ascending,
+      enrollments by `enrolledAt` ascending (ties by `id`).
+    - A `201` response carries the created resource in the body. A `Location` header is
+      allowed but not required.
+    - Query parameters that are present but blank (`?q=` or `?q=%20`) are ignored.
+    - "Not blank" (`pattern: '[^\u0000- ]'`) means the string contains at least one character
+      above U+0020 — exactly what Java's `String.trim()`, and so `@NotBlank`, accepts.
+
+    ## Errors
+    Every non-2xx response, **including** 401 and 403 raised by the security layer, uses
+    the `ApiError` shape with the HTTP status repeated in `status`. Clients display
+    `message`; they never parse it — except these **fixed messages**, which must match word
+    for word and which clients may compare with exactly:
+    `Validation failed` (400 with fieldErrors), `Authentication required` (401 on a protected
+    endpoint), `Access denied` (403), `Invalid email or password` (401 from login),
+    `Already enrolled in this course`, `Course is full`, `Credit limit of 24 exceeded` (409s
+    from enroll). Every other message (e.g. `Email already registered`, `No course with id 7`)
+    is the backend's own wording.
+    - Body fails validation → `400`, `message` `Validation failed`, `fieldErrors` maps each
+      bad field name to a human-readable reason (wording is free).
+    - Body is not valid JSON, or is missing → `400`, `fieldErrors: null`.
+    - A path id that is not a positive integer (`/api/courses/abc`) → `400`.
+    - An unknown `/api/...` path → `404` for an authenticated request (a deny-by-default backend
+      may answer `401` to an anonymous one first). A known path with the wrong method → `405`,
+      with an `Allow` header listing the methods the path supports (RFC 9110).
+    - Anything unexpected → `500` with a generic `message`. Never a stack trace.
+
+    ## Authentication
+    - `POST /api/auth/login` returns a JWT. Clients send it as `Authorization: Bearer <token>`.
+    - The token contains `sub` (email), `role`, `jti`, `iat`, `exp`. Clients must treat it as
+      opaque; the server is the only party that validates it. Lifetime: 3600 seconds unless
+      configured otherwise; `expiresIn` always matches `exp - iat`.
+    - **401** = no token, a malformed `Authorization` header, or a token that is invalid,
+      expired or logged out. The 401 `message` for a protected endpoint is
+      `Authentication required`.
+    - **403** = valid token, but the role or ownership does not allow the action.
+      `message` is `Access denied` unless an endpoint lists its own.
+    - A protected endpoint checks authentication **before** validating the body: a bad body
+      with no token is `401`, not `400`. The role is checked before the body too: a STUDENT
+      gets `403` from an ADMIN-only endpoint whatever it sends.
+    - Public endpoints may either ignore an invalid `Authorization` header or answer `401`
+      (Spring's resource server does the latter), so clients don't send a token on public reads.
+    - After `POST /api/auth/logout`, the same token gets 401 on every protected endpoint.
+      Other tokens of the same user are unaffected.
+
+    ## Roles
+    - `STUDENT`: every account created by signup or Google sign-in.
+    - `ADMIN`: seeded only. Signup never creates an ADMIN, even if the request asks.
+    - Any authenticated user (either role) may enroll and drop their own enrollments.
+
+    ## Business rules
+    - A user can be enrolled in a course at most once.
+    - A course with `seatsLeft = 0` accepts no enrollments.
+    - A user's enrolled credits may not exceed **24**.
+    - Course `code` is unique, compared case-insensitively.
+    - A course's `capacity` cannot be set below its current number of enrollments.
+    - Deleting a course also deletes its enrollments.
+    - When an enroll request breaks several rules, the first in this order wins:
+      course not found (404), already enrolled, course full, credit limit (409s).
+
+    ## Required seed data
+    A conforming backend starts with exactly the users, courses and enrollments in
+    `seed/seed.json` (published in the `api-contract` lab folder): an ADMIN, two STUDENTs,
+    20 courses (five of them full, and a department named `Data Science & AI`), and the
+    enrollments that fill the full courses. Seeding must be idempotent — restarting a
+    backend whose database already has data must not duplicate it.
+
+    ## CORS (required for the browser labs)
+    For origin `http://localhost:5173`: allow methods `GET, POST, PUT, DELETE, OPTIONS` and
+    request headers `Authorization, Content-Type`. A preflight `OPTIONS` request answers
+    `200` or `204` with `Access-Control-Allow-Origin: http://localhost:5173` (or `*`), and
+    every actual response repeats `Access-Control-Allow-Origin`. Students add this to their
+    own backend in React Lab 4; until then the React labs use the mock API, which needs no
+    CORS because Vite serves it from the same origin.
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: Auth
+    description: Signup, login (password or Google), logout
+  - name: Users
+    description: The logged-in user
+  - name: Courses
+    description: The public catalogue; writes are ADMIN-only
+  - name: Enrollments
+    description: A user's own course enrollments
+
+paths:
+  /api/auth/signup:
+    post:
+      tags: [Auth]
+      operationId: signup
+      summary: Register a new student account
+      description: |
+        Email is trimmed and lowercased before it is stored and compared.
+        The new account is always `STUDENT`; any `role` field in the request is ignored.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SignupRequest' }
+      responses:
+        '201':
+          description: Account created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '409':
+          description: Email already registered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+              example:
+                timestamp: '2026-01-15T09:30:00Z'
+                status: 409
+                error: Conflict
+                message: Email already registered
+                path: /api/auth/signup
+                fieldErrors: null
+
+  /api/auth/login:
+    post:
+      tags: [Auth]
+      operationId: login
+      summary: Exchange email and password for a JWT
+      description: |
+        Unknown email and wrong password return the **same** 401 with message
+        `Invalid email or password`, so the response never reveals which emails exist.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Logged in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401':
+          description: Invalid email or password
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+              example:
+                timestamp: '2026-01-15T09:30:00Z'
+                status: 401
+                error: Unauthorized
+                message: Invalid email or password
+                path: /api/auth/login
+                fieldErrors: null
+
+  /api/auth/google:
+    post:
+      tags: [Auth]
+      operationId: loginWithGoogle
+      summary: Exchange a Google ID token for this API's own JWT
+      description: |
+        The server verifies the Google ID token completely: signature, expiry, `iss`
+        (`accounts.google.com` or `https://accounts.google.com`) and `aud` (this app's
+        Google client ID). On first sign-in it creates a `STUDENT` account from the
+        token's verified email and name. The response is identical to `/api/auth/login`.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GoogleLoginRequest' }
+      responses:
+        '200':
+          description: Logged in
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401':
+          description: Google token missing, invalid, expired, or issued for another app
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+
+  /api/auth/logout:
+    post:
+      tags: [Auth]
+      operationId: logout
+      summary: Revoke the current token on the server
+      description: The token's `jti` is denylisted until its expiry. Discarding the token on the client alone is not logout.
+      responses:
+        '204': { description: Logged out }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/users/me:
+    get:
+      tags: [Users]
+      operationId: getCurrentUser
+      summary: The logged-in user's profile
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UserResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/users/me/enrollments:
+    get:
+      tags: [Enrollments]
+      operationId: listMyEnrollments
+      summary: The logged-in user's enrollments, oldest first
+      responses:
+        '200':
+          description: Enrollments
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Enrollment' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/courses:
+    get:
+      tags: [Courses]
+      operationId: listCourses
+      summary: List courses, optionally filtered
+      description: Both filters may be combined. An unknown department returns `200 []`, not an error.
+      security: []
+      parameters:
+        - name: department
+          in: query
+          required: false
+          description: Exact department name, compared case-insensitively. Clients must URL-encode it.
+          schema: { type: string }
+          example: Data Science & AI
+        - name: q
+          in: query
+          required: false
+          description: Case-insensitive substring match on `code` or `title`.
+          schema: { type: string }
+          example: data
+      responses:
+        '200':
+          description: Courses sorted by `code` ascending
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Course' }
+    post:
+      tags: [Courses]
+      operationId: createCourse
+      summary: Create a course (ADMIN)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CourseRequest' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Course' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: Course code already exists
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+
+  /api/courses/{id}:
+    parameters:
+      - $ref: '#/components/parameters/CourseId'
+    get:
+      tags: [Courses]
+      operationId: getCourse
+      summary: Get one course
+      security: []
+      responses:
+        '200':
+          description: The course
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Course' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Courses]
+      operationId: updateCourse
+      summary: Replace a course's fields (ADMIN)
+      description: Full replacement. Every field in `CourseRequest` is required except `description`, which becomes `null` when omitted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CourseRequest' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Course' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Code already used by another course, or capacity below current enrollments
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+    delete:
+      tags: [Courses]
+      operationId: deleteCourse
+      summary: Delete a course and its enrollments (ADMIN)
+      responses:
+        '204': { description: Deleted }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/enrollments:
+    post:
+      tags: [Enrollments]
+      operationId: enroll
+      summary: Enroll the logged-in user in a course
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EnrollmentRequest' }
+      responses:
+        '201':
+          description: Enrolled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Enrollment' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: |
+            One of three conflicts, each with its own fixed `message`:
+            `Already enrolled in this course`, `Course is full`, `Credit limit of 24 exceeded`.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+              example:
+                timestamp: '2026-01-15T09:30:00Z'
+                status: 409
+                error: Conflict
+                message: Course is full
+                path: /api/enrollments
+                fieldErrors: null
+
+  /api/enrollments/{id}:
+    delete:
+      tags: [Enrollments]
+      operationId: dropEnrollment
+      summary: Drop one of the logged-in user's enrollments
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64, minimum: 1 }
+      responses:
+        '204': { description: Dropped }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The enrollment belongs to another user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ApiError' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    CourseId:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, format: int64, minimum: 1 }
+
+  responses:
+    ValidationError:
+      description: Request body failed validation; `fieldErrors` maps each bad field to a message
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+          example:
+            timestamp: '2026-01-15T09:30:00Z'
+            status: 400
+            error: Bad Request
+            message: Validation failed
+            path: /api/auth/signup
+            fieldErrors:
+              email: must be a well-formed email address
+              password: size must be between 8 and 64
+    BadRequest:
+      description: The path id is not a positive 64-bit integer, or the body is not valid JSON
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+          example:
+            timestamp: '2026-01-15T09:30:00Z'
+            status: 400
+            error: Bad Request
+            message: 'Invalid id: abc'
+            path: /api/courses/abc
+            fieldErrors: null
+    Unauthorized:
+      description: No token, or the token is invalid, expired or logged out
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+          example:
+            timestamp: '2026-01-15T09:30:00Z'
+            status: 401
+            error: Unauthorized
+            message: Authentication required
+            path: /api/users/me
+            fieldErrors: null
+    Forbidden:
+      description: Authenticated, but not allowed (wrong role)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+          example:
+            timestamp: '2026-01-15T09:30:00Z'
+            status: 403
+            error: Forbidden
+            message: Access denied
+            path: /api/courses
+            fieldErrors: null
+    NotFound:
+      description: No resource with that id
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ApiError' }
+
+  schemas:
+    Role:
+      type: string
+      enum: [STUDENT, ADMIN]
+
+    SignupRequest:
+      type: object
+      required: [email, password, fullName]
+      properties:
+        email: { type: string, format: email, maxLength: 255, example: alice@test.com }
+        password: { type: string, minLength: 8, maxLength: 64, example: password1 }
+        fullName: { type: string, minLength: 1, maxLength: 100, pattern: '[^\u0000- ]', description: 'Not blank: contains a character above U+0020', example: Alice Rao }
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, example: alice@test.com }
+        password: { type: string, minLength: 1, example: password1 }
+
+    GoogleLoginRequest:
+      type: object
+      required: [idToken]
+      properties:
+        idToken:
+          type: string
+          description: The `credential` string returned by Google Identity Services. Not blank.
+          minLength: 1
+          pattern: '[^\u0000- ]'
+
+    LoginResponse:
+      type: object
+      required: [accessToken, tokenType, expiresIn]
+      properties:
+        accessToken: { type: string, example: eyJhbGciOiJIUzI1NiJ9... }
+        tokenType: { type: string, enum: [Bearer] }
+        expiresIn:
+          type: integer
+          description: Seconds until the token expires; matches the token's `exp`
+          example: 3600
+
+    UserResponse:
+      type: object
+      description: Never contains a password or hash.
+      required: [id, email, fullName, role, createdAt]
+      properties:
+        id: { type: integer, format: int64, example: 2 }
+        email: { type: string, format: email, example: alice@test.com }
+        fullName: { type: string, example: Alice Rao }
+        role: { $ref: '#/components/schemas/Role' }
+        createdAt: { type: string, format: date-time }
+
+    CourseRequest:
+      type: object
+      required: [code, title, department, credits, capacity]
+      properties:
+        code:
+          type: string
+          pattern: '^[A-Z]{2,4}[0-9]{3}$'
+          description: Uppercase letters then three digits; unique
+          example: CS501
+        title: { type: string, minLength: 1, maxLength: 150, pattern: '[^\u0000- ]', description: 'Not blank: contains a character above U+0020', example: Distributed Systems }
+        description: { type: string, maxLength: 1000, nullable: true, example: 'Consensus, replication and failure.' }
+        department: { type: string, minLength: 1, maxLength: 60, pattern: '[^\u0000- ]', description: 'Not blank: contains a character above U+0020', example: Computer Science }
+        credits: { type: integer, minimum: 1, maximum: 6, example: 4 }
+        capacity: { type: integer, minimum: 1, maximum: 500, example: 60 }
+
+    Course:
+      type: object
+      required: [id, code, title, description, department, credits, capacity, seatsLeft]
+      properties:
+        id: { type: integer, format: int64, example: 7 }
+        code: { type: string, example: CS501 }
+        title: { type: string, example: Distributed Systems }
+        description: { type: string, nullable: true }
+        department: { type: string, example: Computer Science }
+        credits: { type: integer, example: 4 }
+        capacity: { type: integer, example: 60 }
+        seatsLeft:
+          type: integer
+          minimum: 0
+          description: '`capacity` minus current enrollments; computed by the server'
+          example: 12
+
+    EnrollmentRequest:
+      type: object
+      required: [courseId]
+      properties:
+        courseId: { type: integer, format: int64, minimum: 1, example: 7 }
+
+    Enrollment:
+      type: object
+      required: [id, course, enrolledAt]
+      properties:
+        id: { type: integer, format: int64, example: 31 }
+        course: { $ref: '#/components/schemas/Course' }
+        enrolledAt: { type: string, format: date-time }
+
+    ApiError:
+      type: object
+      description: The single error shape for every non-2xx response.
+      required: [timestamp, status, error, message, path, fieldErrors]
+      properties:
+        timestamp: { type: string, format: date-time }
+        status: { type: integer, example: 409 }
+        error: { type: string, description: HTTP reason phrase, example: Conflict }
+        message: { type: string, description: Human-readable; safe to show to the user }
+        path: { type: string, example: /api/enrollments }
+        fieldErrors:
+          type: object
+          nullable: true
+          description: Only for 400 validation errors; otherwise null
+          additionalProperties: { type: string }
+
+security:
+  - bearerAuth: []
