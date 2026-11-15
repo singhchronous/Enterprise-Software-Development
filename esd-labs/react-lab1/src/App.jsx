@@ -13,9 +13,51 @@ export default function App() {
   //             Pass it down to Matrix as onIncrement.
   // Section 09: render <Stats matrix={…} /> NEXT TO the matrix, not inside it.
   // Section 11: load /matrix.json once, in a useEffect, and put it in the state.
+  const [matrix, setMatrix] = useState(START);
+  // Section 12 (stretch): how much one click adds.
+  const [step, setStep] = useState(1);
+
+  useEffect(() => {
+    fetch("/matrix.json")
+      .then((res) => res.json())
+      .then((data) => setMatrix(data));
+  }, []);
+
+  function increment(row, col) {
+    setMatrix((prev) => incrementAt(prev, row, col, step));
+  }
+
+  // In-lab: a right-click takes one off, never below 0.
+  function decrement(row, col) {
+    setMatrix((prev) => decrementAt(prev, row, col));
+  }
+
+  // Section 12 (stretch): every cell back to 0.
+  function reset() {
+    setMatrix((prev) => zeros(prev));
+  }
+
   return (
     <main className="app">
       <Header />
+      <div className="controls">
+        <label>
+          Step{" "}
+          <input
+            type="number"
+            min="1"
+            value={step}
+            onChange={(event) => setStep(Number(event.target.value))}
+          />
+        </label>
+        <button type="button" onClick={reset}>
+          Reset
+        </button>
+      </div>
+      <div className="board">
+        <Matrix matrix={matrix} onIncrement={increment} onDecrement={decrement} />
+        <Stats matrix={matrix} />
+      </div>
     </main>
   );
 }
