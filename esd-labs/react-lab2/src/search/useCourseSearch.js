@@ -16,5 +16,31 @@ import { useEffect, useState } from "react";
 import { apiFetch } from "../api/client.js";
 
 export function useCourseSearch(query) {
-  throw new Error("TODO");
+  const q = query.trim();
+  const [results, setResults] = useState([]);
+  const [status, setStatus] = useState("idle");
+
+  useEffect(() => {
+    if (q === "") return; // a blank query sends no request
+    let ignore = false;
+    setStatus("loading");
+    apiFetch(`/api/courses?${new URLSearchParams({ q })}`)
+      .then((courses) => {
+        if (ignore) return;
+        setResults(courses);
+        setStatus("ready");
+      })
+      .catch(() => {
+        if (ignore) return;
+        setResults([]);
+        setStatus("error");
+      });
+    return () => {
+      ignore = true;
+    };
+  }, [q]);
+
+  // A blank query is always "idle" with no results, whatever the last search found.
+  if (q === "") return { results: [], status: "idle" };
+  return { results, status };
 }

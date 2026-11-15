@@ -11,5 +11,17 @@
 //   status "ready"                   → a <ul>, one <li> per course: "CS101 · Programming Fundamentals"
 //                                      (key: the course's id)
 export function SearchResults({ results, status }) {
-  throw new Error("TODO");
+  if (status === "idle") return null;
+  if (status === "loading") return <p>Searching…</p>;
+  if (status === "error") return <p>Search failed.</p>;
+  if (results.length === 0) return <p>No courses match.</p>;
+  return (
+    <ul className="results">
+      {results.map((course) => (
+        <li key={course.id}>
+          {course.code} · {course.title}
+        </li>
+      ))}
+    </ul>
+  );
 }
